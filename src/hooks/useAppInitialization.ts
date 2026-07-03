@@ -5,6 +5,7 @@ import { useSettingsStore } from '../store/useSettingsStore';
 import { useUIStore } from '../store/useUIStore';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useEditorStore } from '../store/useEditorStore';
+import { useProcessStore } from '../store/useProcessStore';
 import { THEMES, DEFAULT_THEME_ID, ThemeProps } from '../utils/themes';
 import { COPYABLE_ADJUSTMENT_KEYS } from '../utils/adjustments';
 import {
@@ -221,7 +222,15 @@ export const useAppInitialization = ({
           });
         }
 
-        invoke('frontend_ready').catch((e) => console.error('Failed to notify backend of readiness:', e));
+        invoke('frontend_ready')
+          .then((launch: any) => {
+            if (launch?.editSession) {
+              useProcessStore.getState().setProcess({ externalEditSession: launch.editSession });
+            } else if (launch?.openWithFile) {
+              useProcessStore.getState().setProcess({ initialFileToOpen: launch.openWithFile });
+            }
+          })
+          .catch((e) => console.error('Failed to notify backend of readiness:', e));
       })
       .catch((err) => {
         console.error('Failed to load settings:', err);
