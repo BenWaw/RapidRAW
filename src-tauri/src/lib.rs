@@ -1769,17 +1769,91 @@ fn handle_file_open(app_handle: &tauri::AppHandle, path: PathBuf) {
     }
 }
 
+enum LaunchRequest {
+    None,
+    OpenFile(String),
+    EditSession(ExternalEditSession),
+}
+
+fn parse_launch_args(args: &[String]) -> LaunchRequest {
+    let mut edit: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut format: Option<String> = None;
+    let mut quality: Option<u8> = None;
+    let mut plain: Option<String> = None;
+
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--edit" => edit = iter.next().cloned(),
+            "--output" => output = iter.next().cloned(),
+            "--format" => format = iter.next().cloned(),
+            "--quality" => quality = iter.next().and_then(|q| q.parse().ok()),
+            s if !s.starts_with('-') && plain.is_none() => plain = Some(s.to_string()),
+            _ => {}
+        }
+    }
+
+    match (edit, output) {
+        (Some(source), Some(output)) => {
+            let format = format.unwrap_or_else(|| {
+                std::path::Path::new(&output)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_else(|| "jpg".to_string())
+            });
+            let format = match format.as_str() {
+                "tif" => "tiff".to_string(),
+                _ => format,
+            };
+            LaunchRequest::EditSession(ExternalEditSession {
+                source,
+                output,
+                format,
+                jpeg_quality: quality.unwrap_or(90),
+            })
+        }
+        (Some(source), None) => LaunchRequest::OpenFile(source),
+        _ => match plain {
+            Some(path) => LaunchRequest::OpenFile(path),
+            None => LaunchRequest::None,
+        },
+    }
+}
+
+fn emit_launch_request(app_handle: &tauri::AppHandle, request: LaunchRequest) {
+    match request {
+        LaunchRequest::EditSession(session) => {
+            if let Err(e) = app_handle.emit("external-edit-session", &session) {
+                log::error!("Failed to emit external-edit-session event: {}", e);
+            }
+        }
+        LaunchRequest::OpenFile(path) => {
+            handle_file_open(app_handle, PathBuf::from(path));
+        }
+        LaunchRequest::None => {}
+    }
+}
+
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LaunchPayload {
+    open_with_file: Option<String>,
+    edit_session: Option<ExternalEditSession>,
+}
+
 #[tauri::command]
 fn frontend_ready(
     app_handle: tauri::AppHandle,
     window: tauri::Window,
     state: tauri::State<AppState>,
-) -> Result<(), String> {
+) -> Result<LaunchPayload, String> {
     let is_first_run = !state
         .window_setup_complete
         .swap(true, std::sync::atomic::Ordering::Relaxed);
     #[cfg(target_os = "android")]
-    let _ = (is_first_run, &window);
+    let _ = (is_first_run, &window, &app_handle);
 
     #[cfg(not(target_os = "android"))]
     {
@@ -1844,14 +1918,21 @@ fn frontend_ready(
         }
     }
 
-    if let Some(path) = state.initial_file_path.lock().unwrap().take() {
-        log::info!(
-            "Frontend is ready, emitting open-with-file for initial path: {}",
-            &path
-        );
-        handle_file_open(&app_handle, PathBuf::from(path));
+    let open_with_file = state.initial_file_path.lock().unwrap().take();
+    let edit_session = state.pending_edit_session.lock().unwrap().take();
+    if let Some(path) = &open_with_file {
+        log::info!("Frontend is ready, returning initial path: {}", path);
     }
-    Ok(())
+    if let Some(session) = &edit_session {
+        log::info!(
+            "Frontend is ready, returning external edit session for: {}",
+            &session.source
+        );
+    }
+    Ok(LaunchPayload {
+        open_with_file,
+        edit_session,
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1874,15 +1955,8 @@ pub fn run() {
                 }
             }
 
-            if argv.len() > 1 {
-                let path_str = &argv[1];
-                if let Err(e) = app.emit("open-with-file", path_str) {
-                    log::error!(
-                        "Failed to emit open-with-file from single-instance handler: {}",
-                        e
-                    );
-                }
-            }
+            let forwarded_args = argv.get(1..).unwrap_or(&[]);
+            emit_launch_request(app, parse_launch_args(forwarded_args));
         }));
     }
 
@@ -1907,10 +1981,18 @@ pub fn run() {
         .setup(|app| {
             #[cfg(any(windows, target_os = "linux"))]
             {
-                if let Some(arg) = std::env::args().nth(1) {
-                     let state = app.state::<AppState>();
-                     log::info!("Windows/Linux initial open: Storing path {} for later.", &arg);
-                     *state.initial_file_path.lock().unwrap() = Some(arg);
+                let args: Vec<String> = std::env::args().skip(1).collect();
+                let state = app.state::<AppState>();
+                match parse_launch_args(&args) {
+                    LaunchRequest::EditSession(session) => {
+                        log::info!("Initial launch with external edit session for: {}", &session.source);
+                        *state.pending_edit_session.lock().unwrap() = Some(session);
+                    }
+                    LaunchRequest::OpenFile(path) => {
+                        log::info!("Windows/Linux initial open: Storing path {} for later.", &path);
+                        *state.initial_file_path.lock().unwrap() = Some(path);
+                    }
+                    LaunchRequest::None => {}
                 }
             }
 
@@ -2172,6 +2254,7 @@ pub fn run() {
             indexing_task_handle: Mutex::new(None),
             lut_cache: Mutex::new(HashMap::new()),
             initial_file_path: Mutex::new(None),
+            pending_edit_session: Mutex::new(None),
             thumbnail_cancellation_token: Arc::new(AtomicBool::new(false)),
             thumbnail_progress: Mutex::new(ThumbnailProgressTracker { total: 0, completed: 0 }),
             preview_worker_tx: Mutex::new(None),

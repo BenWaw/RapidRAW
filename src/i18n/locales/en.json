@@ -498,6 +498,11 @@
         "transform": "Perspective and keystone correction"
       }
     },
+    "externalEdit": {
+      "done": "Done",
+      "exporting": "Exporting…",
+      "savesTo": "External edit — saves to"
+    },
     "masks": {
       "actions": {
         "addNewComponent": "Add New Component",
