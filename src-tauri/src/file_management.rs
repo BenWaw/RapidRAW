@@ -2408,7 +2408,7 @@ pub async fn apply_auto_adjustments_to_paths(
             );
 
             if let Some((thumbnail_path, rating, is_edited)) = result {
-                emit_thumbnail_generated(&app_handle, &path, &thumbnail_path, rating, is_edited);
+                emit_thumbnail_generated(&app_handle, path, &thumbnail_path, rating, is_edited);
             }
 
             increment_thumbnail_progress(&state, &app_handle);
