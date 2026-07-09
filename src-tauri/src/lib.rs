@@ -1785,6 +1785,68 @@ struct LaunchPayload {
     edit_session: Option<ExternalEditSession>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MonitorBounds {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn saved_window_state_is_usable(state: &WindowState, monitors: &[MonitorBounds]) -> bool {
+    if state.width < 800 || state.height < 600 {
+        return false;
+    }
+
+    if monitors.is_empty() {
+        return true;
+    }
+
+    let window_left = state.x as i64;
+    let window_top = state.y as i64;
+    let window_right = window_left + state.width as i64;
+    let window_bottom = window_top + state.height as i64;
+
+    monitors.iter().any(|monitor| {
+        let monitor_left = monitor.x as i64;
+        let monitor_top = monitor.y as i64;
+        let monitor_right = monitor_left + monitor.width as i64;
+        let monitor_bottom = monitor_top + monitor.height as i64;
+
+        let overlap_width = window_right.min(monitor_right) - window_left.max(monitor_left);
+        let overlap_height = window_bottom.min(monitor_bottom) - window_top.max(monitor_top);
+
+        overlap_width >= 100 && overlap_height >= 100
+    })
+}
+
+#[cfg(not(target_os = "android"))]
+fn available_monitor_bounds(window: &tauri::WebviewWindow) -> Vec<MonitorBounds> {
+    window
+        .available_monitors()
+        .map(|monitors| {
+            monitors
+                .into_iter()
+                .map(|monitor| {
+                    let position = monitor.position();
+                    let size = monitor.size();
+                    MonitorBounds {
+                        x: position.x,
+                        y: position.y,
+                        width: size.width,
+                        height: size.height,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "android")]
+fn available_monitor_bounds(_window: &tauri::WebviewWindow) -> Vec<MonitorBounds> {
+    Vec::new()
+}
+
 #[tauri::command]
 fn frontend_ready(
     app_handle: tauri::AppHandle,
@@ -2068,7 +2130,8 @@ pub fn run() {
                     let path = config_dir.join("window_state.json");
                     if let Ok(contents) = std::fs::read_to_string(&path) {
                         if let Ok(state) = serde_json::from_str::<WindowState>(&contents) {
-                            if state.width >= 800  && state.height >= 600 {
+                            let monitor_bounds = available_monitor_bounds(&window);
+                            if saved_window_state_is_usable(&state, &monitor_bounds) {
                                 let _ = window.set_size(tauri::Size::Physical(
                                     tauri::PhysicalSize::new(state.width, state.height),
                                 ));
@@ -2077,9 +2140,11 @@ pub fn run() {
                                 ));
                             } else {
                                 log::warn!(
-                                    "Saved window state had unreasonable dimensions ({}x{}), centering instead.",
+                                    "Saved window state was unusable ({}x{} at {},{}), centering instead.",
                                     state.width,
-                                    state.height
+                                    state.height,
+                                    state.x,
+                                    state.y
                                 );
                                 let _ = window.center();
                             }

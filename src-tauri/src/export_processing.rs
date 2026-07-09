@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -191,6 +191,68 @@ fn calculate_resize_target(
         let w = (value as f32 * (current_w as f32 / current_h as f32)).round() as u32;
         (w, value)
     }
+}
+
+fn relative_dir_is_safe(rel_dir: &Path) -> bool {
+    rel_dir.components().all(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    })
+}
+
+#[cfg(windows)]
+fn component_matches(left: std::path::Component<'_>, right: std::path::Component<'_>) -> bool {
+    left.as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy())
+}
+
+#[cfg(not(windows))]
+fn component_matches(left: std::path::Component<'_>, right: std::path::Component<'_>) -> bool {
+    left == right
+}
+
+fn strip_prefix_preserving_source_case(source_path: &Path, base_path: &Path) -> Option<PathBuf> {
+    let source_components: Vec<_> = source_path.components().collect();
+    let base_components: Vec<_> = base_path.components().collect();
+
+    if base_components.len() > source_components.len() {
+        return None;
+    }
+
+    if !source_components
+        .iter()
+        .zip(base_components.iter())
+        .all(|(source, base)| component_matches(*source, *base))
+    {
+        return None;
+    }
+
+    Some(source_components[base_components.len()..].iter().collect())
+}
+
+fn relative_export_dir_for_preserved_folders(
+    source_path: &Path,
+    base_origin_folders: &[String],
+) -> Option<PathBuf> {
+    base_origin_folders
+        .iter()
+        .filter_map(|base| {
+            let base_path = Path::new(base);
+            strip_prefix_preserving_source_case(source_path, base_path)
+                .map(|rel_path| (base_path.components().count(), rel_path))
+        })
+        .max_by_key(|(component_count, _)| *component_count)
+        .and_then(|(_, rel_path)| {
+            let rel_dir = rel_path.parent().unwrap_or_else(|| Path::new(""));
+            if relative_dir_is_safe(rel_dir) {
+                Some(rel_dir.to_path_buf())
+            } else {
+                None
+            }
+        })
 }
 
 fn apply_export_resize_and_watermark(
@@ -789,33 +851,15 @@ pub async fn export_images(
                 let output_path = if is_explicit_file_path && total_paths == 1 {
                     output_folder_path
                 } else if export_settings.preserve_folders {
-                    let matched_base = base_origin_folders
-                        .iter()
-                        .map(std::path::Path::new)
-                        .find(|b| source_path.starts_with(b));
-                    if let Some(base_origin) = matched_base {
-                        if let Ok(rel_path) = source_path.strip_prefix(base_origin) {
-                            let rel_dir = rel_path
-                                .parent()
-                                .unwrap_or_else(|| std::path::Path::new(""));
-                            let rel_dir_is_safe = rel_dir.components().all(|component| {
-                                matches!(
-                                    component,
-                                    std::path::Component::Normal(_) | std::path::Component::CurDir
-                                )
-                            });
-                            if rel_dir_is_safe {
-                                let full_dir = output_folder_path.join(rel_dir);
-                                if let Err(e) = std::fs::create_dir_all(&full_dir) {
-                                    log::warn!("Failed to create export subdirectory: {}", e);
-                                }
-                                full_dir.join(&new_filename)
-                            } else {
-                                output_folder_path.join(&new_filename)
-                            }
-                        } else {
-                            output_folder_path.join(&new_filename)
+                    if let Some(rel_dir) = relative_export_dir_for_preserved_folders(
+                        source_path.as_path(),
+                        &base_origin_folders,
+                    ) {
+                        let full_dir = output_folder_path.join(rel_dir);
+                        if let Err(e) = std::fs::create_dir_all(&full_dir) {
+                            log::warn!("Failed to create export subdirectory: {}", e);
                         }
+                        full_dir.join(&new_filename)
                     } else {
                         output_folder_path.join(&new_filename)
                     }

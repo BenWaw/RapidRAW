@@ -474,7 +474,8 @@ export default function ExportPanel({
       const selectedFormat: any = FILE_FORMATS.find((f) => f.id === fileFormat);
 
       let outputFolderOrFile = '';
-      if (numImages === 1) {
+      const shouldChooseOutputFile = numImages === 1 && !preserveFolders;
+      if (shouldChooseOutputFile) {
         const originalFilename = pathsToExport[0].split(/[\\/]/).pop() || '';
         const stem = originalFilename.substring(0, originalFilename.lastIndexOf('.')) || originalFilename;
         const suggestedName = finalFilenameTemplate.replace('{original_filename}', stem);
@@ -506,7 +507,7 @@ export default function ExportPanel({
       if (isAndroid || outputFolderOrFile) {
         if (!isAndroid) {
           const dir =
-            numImages === 1
+            shouldChooseOutputFile
               ? outputFolderOrFile.substring(
                   0,
                   Math.max(outputFolderOrFile.lastIndexOf('/'), outputFolderOrFile.lastIndexOf('\\')),
@@ -519,7 +520,7 @@ export default function ExportPanel({
         await invoke(Invokes.ExportImages, {
           paths: pathsToExport,
           outputFolderOrFile: outputFolderOrFile,
-          isExplicitFilePath: numImages === 1,
+          isExplicitFilePath: shouldChooseOutputFile,
           baseOriginFolders: rootPaths,
           exportSettings,
           outputFormat: selectedFormat.extensions[0],
