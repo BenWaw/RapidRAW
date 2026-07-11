@@ -97,7 +97,8 @@ fn resolve_image_metadata(
 
     let is_raw = crate::formats::is_raw_file(image_path);
     let tm_override = crate::image_processing::resolve_tonemapper_override(settings, is_raw);
-    let edited = crate::image_processing::is_image_edited(&metadata.adjustments, is_raw, tm_override);
+    let edited =
+        crate::image_processing::is_image_edited(&metadata.adjustments, is_raw, tm_override);
     (edited, metadata.tags, metadata.rating)
 }
 
@@ -170,9 +171,19 @@ pub fn start_metadata_workers(app_handle: tauri::AppHandle) {
                     &settings,
                 );
 
-                emit_image_metadata_loaded(&app_clone, &item.virtual_path, rating, is_edited, &tags);
+                emit_image_metadata_loaded(
+                    &app_clone,
+                    &item.virtual_path,
+                    rating,
+                    is_edited,
+                    &tags,
+                );
 
-                manager_clone.pending.lock().unwrap().remove(&item.sidecar_path);
+                manager_clone
+                    .pending
+                    .lock()
+                    .unwrap()
+                    .remove(&item.sidecar_path);
             }
         });
     }
@@ -455,21 +466,23 @@ pub fn list_images_in_dir(path: String, app_handle: AppHandle) -> Result<Vec<Ima
                 let sidecar_path = path_buf.with_file_name(sidecar_filename);
 
                 let xmp_is_placeholder = enable_xmp_sync
-                    && resolve_xmp_path(&path_buf).is_some_and(|p| crate::file_management::is_cloud_placeholder(&p));
+                    && resolve_xmp_path(&path_buf)
+                        .is_some_and(|p| crate::file_management::is_cloud_placeholder(&p));
 
-                let (is_edited, tags, rating) = if crate::file_management::is_cloud_placeholder(&sidecar_path)
-                    || xmp_is_placeholder
-                {
-                    enqueue_metadata(
-                        &app_handle,
-                        virtual_path.clone(),
-                        path_buf.clone(),
-                        sidecar_path.clone(),
-                    );
-                    (false, None, 0)
-                } else {
-                    resolve_image_metadata(&path_buf, &sidecar_path, enable_xmp_sync, &settings)
-                };
+                let (is_edited, tags, rating) =
+                    if crate::file_management::is_cloud_placeholder(&sidecar_path)
+                        || xmp_is_placeholder
+                    {
+                        enqueue_metadata(
+                            &app_handle,
+                            virtual_path.clone(),
+                            path_buf.clone(),
+                            sidecar_path.clone(),
+                        );
+                        (false, None, 0)
+                    } else {
+                        resolve_image_metadata(&path_buf, &sidecar_path, enable_xmp_sync, &settings)
+                    };
 
                 file_results.push(ImageFile {
                     path: virtual_path,
@@ -577,21 +590,23 @@ pub fn list_images_recursive(
                 let sidecar_path = path_buf.with_file_name(sidecar_filename);
 
                 let xmp_is_placeholder = enable_xmp_sync
-                    && resolve_xmp_path(&path_buf).is_some_and(|p| crate::file_management::is_cloud_placeholder(&p));
+                    && resolve_xmp_path(&path_buf)
+                        .is_some_and(|p| crate::file_management::is_cloud_placeholder(&p));
 
-                let (is_edited, tags, rating) = if crate::file_management::is_cloud_placeholder(&sidecar_path)
-                    || xmp_is_placeholder
-                {
-                    enqueue_metadata(
-                        &app_handle,
-                        virtual_path.clone(),
-                        path_buf.clone(),
-                        sidecar_path.clone(),
-                    );
-                    (false, None, 0)
-                } else {
-                    resolve_image_metadata(&path_buf, &sidecar_path, enable_xmp_sync, &settings)
-                };
+                let (is_edited, tags, rating) =
+                    if crate::file_management::is_cloud_placeholder(&sidecar_path)
+                        || xmp_is_placeholder
+                    {
+                        enqueue_metadata(
+                            &app_handle,
+                            virtual_path.clone(),
+                            path_buf.clone(),
+                            sidecar_path.clone(),
+                        );
+                        (false, None, 0)
+                    } else {
+                        resolve_image_metadata(&path_buf, &sidecar_path, enable_xmp_sync, &settings)
+                    };
 
                 file_results.push(ImageFile {
                     path: virtual_path,
@@ -839,10 +854,12 @@ pub fn get_album_images(
             let is_cloud_placeholder = is_cloud_placeholder(&source_path);
 
             let xmp_is_placeholder = enable_xmp_sync
-                && resolve_xmp_path(&source_path).is_some_and(|p| crate::file_management::is_cloud_placeholder(&p));
+                && resolve_xmp_path(&source_path)
+                    .is_some_and(|p| crate::file_management::is_cloud_placeholder(&p));
 
-            let (is_edited, tags, rating) = if crate::file_management::is_cloud_placeholder(&sidecar_path)
-                || xmp_is_placeholder
+            let (is_edited, tags, rating) = if crate::file_management::is_cloud_placeholder(
+                &sidecar_path,
+            ) || xmp_is_placeholder
             {
                 enqueue_metadata(
                     &app_handle,
