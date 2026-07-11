@@ -41,6 +41,7 @@ import { useLibraryActions } from './hooks/useLibraryActions';
 import { useProductivityActions } from './hooks/useProductivityActions';
 
 import { useAppInitialization } from './hooks/useAppInitialization';
+import { useAndroidBackHandler } from './hooks/useAndroidBackHandler';
 import './i18n';
 
 import {
@@ -370,6 +371,8 @@ function App() {
     refreshImageList: handleLibraryRefresh,
     markGenerated,
   });
+
+  useAndroidBackHandler();
 
   const handleToggleFullScreen = useCallback(() => {
     const { zoom, selectedImage } = useEditorStore.getState();
