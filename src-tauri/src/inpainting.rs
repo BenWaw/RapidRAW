@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::io::Cursor;
 
 use base64::{Engine as _, engine::general_purpose};
@@ -10,7 +9,7 @@ use crate::ai_processing;
 use crate::app_settings::load_settings;
 use crate::app_state::AppState;
 use crate::image_loader::composite_patches_on_image;
-use crate::image_processing::{apply_linear_to_srgb, apply_unwarp_geometry};
+use crate::image_processing::apply_linear_to_srgb;
 use crate::mask_generation::{AiPatchDefinition, MaskDefinition, generate_mask_bitmap};
 use crate::resolve_warped_image_for_masks;
 
@@ -46,6 +45,16 @@ pub async fn generate_manual_cleanup_patch(
 
     let (img_w, img_h) = source_image.dimensions();
 
+    let orientation_steps = current_adjustments
+        .get("orientationSteps")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u8;
+    let (trans_w, trans_h) = if orientation_steps % 2 == 1 {
+        (img_h, img_w)
+    } else {
+        (img_w, img_h)
+    };
+
     let mask_def_for_generation = MaskDefinition {
         id: patch_definition.id.clone(),
         name: patch_definition.name.clone(),
@@ -64,18 +73,16 @@ pub async fn generate_manual_cleanup_patch(
 
     let mask_bitmap = generate_mask_bitmap(
         &mask_def_for_generation,
-        img_w,
-        img_h,
+        trans_w,
+        trans_h,
         1.0,
         (0.0, 0.0),
         warped_image.as_deref(),
     )
     .ok_or("Failed to generate mask bitmap for manual cleanup")?;
 
-    let mask_dynamic = DynamicImage::ImageLuma8(mask_bitmap);
-    let unwarped_dynamic =
-        apply_unwarp_geometry(Cow::Borrowed(&mask_dynamic), &current_adjustments).into_owned();
-    let mask_bitmap = unwarped_dynamic.to_luma8();
+    let mask_bitmap =
+        crate::image_processing::inverse_transform_mask(mask_bitmap, &current_adjustments);
 
     let mask_raw = mask_bitmap.as_raw();
     let img_w_usize = img_w as usize;
@@ -130,8 +137,16 @@ pub async fn generate_manual_cleanup_patch(
     let center_x = (min_x + max_x) as f64 / 2.0;
     let center_y = (min_y + max_y) as f64 / 2.0;
 
-    let offset_x = (source_point.0 - center_x).round() as i32;
-    let offset_y = (source_point.1 - center_y).round() as i32;
+    let source_point_untransformed = crate::image_processing::inverse_transform_point(
+        source_point.0,
+        source_point.1,
+        trans_w as f64,
+        trans_h as f64,
+        &current_adjustments,
+    );
+
+    let offset_x = (source_point_untransformed.0 - center_x).round() as i32;
+    let offset_y = (source_point_untransformed.1 - center_y).round() as i32;
 
     let min_x_u32 = min_x as u32;
     let min_y_u32 = min_y as u32;
@@ -338,6 +353,17 @@ pub async fn invoke_generative_replace_with_mask_def(
     };
 
     let (img_w, img_h) = source_image.dimensions();
+
+    let orientation_steps = current_adjustments
+        .get("orientationSteps")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u8;
+    let (trans_w, trans_h) = if orientation_steps % 2 == 1 {
+        (img_h, img_w)
+    } else {
+        (img_w, img_h)
+    };
+
     let mask_def_for_generation = MaskDefinition {
         id: patch_definition.id.clone(),
         name: patch_definition.name.clone(),
@@ -356,18 +382,16 @@ pub async fn invoke_generative_replace_with_mask_def(
 
     let mask_bitmap = generate_mask_bitmap(
         &mask_def_for_generation,
-        img_w,
-        img_h,
+        trans_w,
+        trans_h,
         1.0,
         (0.0, 0.0),
         warped_image.as_deref(),
     )
     .ok_or("Failed to generate mask bitmap for AI replace")?;
 
-    let mask_dynamic = DynamicImage::ImageLuma8(mask_bitmap);
-    let unwarped_dynamic =
-        apply_unwarp_geometry(Cow::Borrowed(&mask_dynamic), &current_adjustments).into_owned();
-    let mask_bitmap = unwarped_dynamic.to_luma8();
+    let mask_bitmap =
+        crate::image_processing::inverse_transform_mask(mask_bitmap, &current_adjustments);
 
     let patch_rgba = if use_fast_inpaint {
         let lama_model = ai_processing::get_or_init_lama_model(

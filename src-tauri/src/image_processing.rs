@@ -937,6 +937,182 @@ pub fn unwarp_image_geometry(warped_image: &DynamicImage, params: GeometryParams
     DynamicImage::ImageRgb32F(out_img)
 }
 
+pub fn inverse_transform_mask(
+    mask: image::GrayImage,
+    adjustments: &serde_json::Value,
+) -> image::GrayImage {
+    let rotation_degrees = adjustments
+        .get("rotation")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0) as f32;
+    let mask_dyn = image::DynamicImage::ImageLuma8(mask);
+
+    let unrotated_fine = if rotation_degrees.abs() > 1e-5 {
+        crate::image_processing::apply_rotation(mask_dyn, -rotation_degrees).into_owned()
+    } else {
+        mask_dyn
+    };
+
+    let flip_h = adjustments
+        .get("flipHorizontal")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let flip_v = adjustments
+        .get("flipVertical")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let flipped = apply_flip(unrotated_fine, flip_h, flip_v).into_owned();
+
+    let steps = adjustments
+        .get("orientationSteps")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u8;
+    let inverse_steps = (4 - (steps % 4)) % 4;
+    let unrotated_coarse = apply_coarse_rotation(flipped, inverse_steps).into_owned();
+
+    let unwarped = apply_unwarp_geometry(unrotated_coarse, adjustments).into_owned();
+
+    unwarped.into_luma8()
+}
+
+pub fn inverse_transform_point(
+    mut x: f64,
+    mut y: f64,
+    mut curr_w: f64,
+    mut curr_h: f64,
+    adjustments: &serde_json::Value,
+) -> (f64, f64) {
+    let rotation_degrees = adjustments
+        .get("rotation")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    if rotation_degrees.abs() > 1e-5 {
+        let cx = curr_w / 2.0;
+        let cy = curr_h / 2.0;
+        let theta_rad = -rotation_degrees * std::f64::consts::PI / 180.0;
+        let cos_t = theta_rad.cos();
+        let sin_t = theta_rad.sin();
+
+        let dx = x - cx;
+        let dy = y - cy;
+        x = cx + dx * cos_t - dy * sin_t;
+        y = cy + dx * sin_t + dy * cos_t;
+    }
+
+    let flip_h = adjustments
+        .get("flipHorizontal")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let flip_v = adjustments
+        .get("flipVertical")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if flip_h {
+        x = curr_w - x;
+    }
+    if flip_v {
+        y = curr_h - y;
+    }
+
+    let steps = adjustments
+        .get("orientationSteps")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u8;
+    let inverse_steps = (4 - (steps % 4)) % 4;
+    for _ in 0..inverse_steps {
+        let new_x = curr_h - y;
+        let new_y = x;
+        x = new_x;
+        y = new_y;
+        std::mem::swap(&mut curr_w, &mut curr_h);
+    }
+
+    let params = get_geometry_params_from_json(adjustments);
+    let width = curr_w as f32;
+    let height = curr_h as f32;
+
+    let (forward_transform, cx_f32, cy_f32, hd) = build_transform_matrices(&params, width, height);
+    let cx = cx_f32 as f64;
+    let cy = cy_f32 as f64;
+    let inv = forward_transform
+        .try_inverse()
+        .unwrap_or(nalgebra::Matrix3::identity());
+
+    let vec = inv * nalgebra::Vector3::new(x as f32, y as f32, 1.0);
+    if vec.z.abs() > 1e-6 {
+        let inv_z = 1.0 / (vec.z as f64);
+        let mut src_x = (vec.x as f64) * inv_z;
+        let mut src_y = (vec.y as f64) * inv_z;
+
+        let k_distortion = (params.distortion as f64 / 100.0) * 2.5;
+        let lk1 = params.lens_dist_k1 as f64;
+        let lk2 = params.lens_dist_k2 as f64;
+        let lk3 = params.lens_dist_k3 as f64;
+        let lens_dist_amt = (params.lens_distortion_amount as f64) * 2.5;
+
+        let has_lens_correction = params.lens_distortion_enabled
+            && (lk1.abs() > 1e-6 || lk2.abs() > 1e-6 || lk3.abs() > 1e-6);
+        let is_ptlens = params.lens_model == 1;
+
+        let auto_crop_scale = if has_lens_correction || k_distortion.abs() > 1e-5 {
+            compute_lens_auto_crop_scale(&params, width, height)
+        } else {
+            1.0
+        };
+
+        if auto_crop_scale > 1.0 {
+            src_x = cx + (src_x - cx) / auto_crop_scale;
+            src_y = cy + (src_y - cy) / auto_crop_scale;
+        }
+
+        if has_lens_correction {
+            let dx = src_x - cx;
+            let dy = src_y - cy;
+            let ru = (dx * dx + dy * dy).sqrt();
+
+            if ru > 1e-6 {
+                let ru_norm = ru / hd;
+                let ru_norm2 = ru_norm * ru_norm;
+
+                let rd_norm = if is_ptlens {
+                    let a = lk1;
+                    let b = lk2;
+                    let c = lk3;
+                    let d = 1.0 - a - b - c;
+                    ru_norm * (a * ru_norm2 * ru_norm + b * ru_norm2 + c * ru_norm + d)
+                } else {
+                    ru_norm
+                        * (1.0
+                            + lk1 * ru_norm2
+                            + lk2 * (ru_norm2 * ru_norm2)
+                            + lk3 * (ru_norm2 * ru_norm2 * ru_norm2))
+                };
+
+                let effective_r_norm = ru_norm + (rd_norm - ru_norm) * lens_dist_amt;
+                let scale = effective_r_norm / ru_norm;
+
+                src_x = cx + (dx * scale);
+                src_y = cy + (dy * scale);
+            }
+        }
+
+        if k_distortion.abs() > 1e-5 {
+            let max_radius_sq_inv = 1.0 / (cx * cx + cy * cy);
+            let dx = src_x - cx;
+            let dy = src_y - cy;
+            let r2_norm = (dx * dx + dy * dy) * max_radius_sq_inv;
+            let f = 1.0 + k_distortion * r2_norm;
+
+            src_x = cx + (dx * f);
+            src_y = cy + (dy * f);
+        }
+
+        return (src_x, src_y);
+    }
+
+    (x, y)
+}
+
 pub fn apply_cpu_default_raw_processing(image: &mut DynamicImage) {
     let mut f32_image = image.to_rgb32f();
 

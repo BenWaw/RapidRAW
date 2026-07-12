@@ -472,9 +472,22 @@ pub fn composite_patches_on_image(
                     sub_masks: patch_info.sub_masks,
                 };
 
+                let orientation_steps = current_adjustments
+                    .get("orientationSteps")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u8;
+                let (trans_w, trans_h) = if orientation_steps % 2 == 1 {
+                    (base_h, base_w)
+                } else {
+                    (base_w, base_h)
+                };
+
                 let mut gen_mask =
-                    generate_mask_bitmap(&mask_def, base_w, base_h, 1.0, (0.0, 0.0), None)
+                    generate_mask_bitmap(&mask_def, trans_w, trans_h, 1.0, (0.0, 0.0), None)
                         .context("Failed to generate mask from sub_masks for compositing")?;
+
+                gen_mask =
+                    crate::image_processing::inverse_transform_mask(gen_mask, current_adjustments);
 
                 if let (Some(ox), Some(oy)) = (offset_x, offset_y) {
                     let w = patch_data
