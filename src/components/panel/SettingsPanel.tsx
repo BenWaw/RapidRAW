@@ -533,6 +533,7 @@ export default function SettingsPanel({
     editorPreviewResolution: appSettings?.editorPreviewResolution || 1920,
     thumbnailResolution: appSettings?.thumbnailResolution || 720,
     rawHighlightCompression: appSettings?.rawHighlightCompression ?? 2.5,
+    rawCameraProfile: appSettings?.rawCameraProfile ?? 'auto',
     processingBackend: appSettings?.processingBackend || 'auto',
     linuxGpuOptimization: appSettings?.linuxGpuOptimization ?? false,
     highResZoomMultiplier: appSettings?.highResZoomMultiplier || 1.0,
@@ -641,6 +642,7 @@ export default function SettingsPanel({
       editorPreviewResolution: appSettings?.editorPreviewResolution || 1920,
       thumbnailResolution: appSettings?.thumbnailResolution || 720,
       rawHighlightCompression: appSettings?.rawHighlightCompression ?? 2.5,
+      rawCameraProfile: appSettings?.rawCameraProfile ?? 'auto',
       processingBackend: appSettings?.processingBackend || 'auto',
       linuxGpuOptimization: appSettings?.linuxGpuOptimization ?? false,
       highResZoomMultiplier: appSettings?.highResZoomMultiplier || 1.0,
@@ -688,6 +690,7 @@ export default function SettingsPanel({
       await onSettingsChange({ ...appSettings, [key]: value });
       if (
         key === 'rawHighlightCompression' ||
+        key === 'rawCameraProfile' ||
         key === 'rawPreprocessingColorNr' ||
         key === 'rawPreprocessingSharpening' ||
         key === 'applyPreprocessingToNonRaws'
@@ -2005,6 +2008,28 @@ export default function SettingsPanel({
                         id="preprocessing-non-raws-toggle"
                         label={t('settings.processing.preprocessing.enablePreprocessingNonRaws')}
                         onChange={(checked) => handleProcessingSettingChange('applyPreprocessingToNonRaws', checked)}
+                      />
+                    </SettingItem>
+
+                    <SettingItem
+                      label={t('settings.processing.preprocessing.cameraProfile')}
+                      description={t('settings.processing.preprocessing.cameraProfileDesc')}
+                    >
+                      <Dropdown
+                        onChange={(value: any) => handleProcessingSettingChange('rawCameraProfile', value)}
+                        options={[
+                          { value: 'auto', label: t('settings.processing.preprocessing.cameraProfileOptions.auto') },
+                          { value: 'neutral', label: t('settings.processing.preprocessing.cameraProfileOptions.neutral') },
+                          { value: 'olympus_vivid', label: t('settings.processing.preprocessing.cameraProfileOptions.olympusVivid') },
+                          { value: 'olympus_natural', label: t('settings.processing.preprocessing.cameraProfileOptions.olympusNatural') },
+                          { value: 'olympus_muted', label: t('settings.processing.preprocessing.cameraProfileOptions.olympusMuted') },
+                          { value: 'olympus_portrait', label: t('settings.processing.preprocessing.cameraProfileOptions.olympusPortrait') },
+                          { value: 'olympus_i_enhance', label: t('settings.processing.preprocessing.cameraProfileOptions.olympusIEnhance') },
+                          { value: 'olympus_monochrome', label: t('settings.processing.preprocessing.cameraProfileOptions.olympusMonochrome') },
+                          { value: 'olympus_sepia', label: t('settings.processing.preprocessing.cameraProfileOptions.olympusSepia') },
+                        ]}
+                        value={processingSettings.rawCameraProfile}
+                        triggerClassName="bg-bg-primary"
                       />
                     </SettingItem>
 

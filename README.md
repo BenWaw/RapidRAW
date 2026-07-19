@@ -559,12 +559,17 @@ RapidRAW is built to be lightweight and cross-platform. The minimum (tested) req
 
 If the application crashes immediately when you try to start editing a picture, it is often due to the automatic selection of the GPU backend.
 
-1.  Open **Settings** on the **Home Screen** (Gear icon).
-2.  Navigate to the **Processing** tab.
-3.  Locate the **Processing Backend** setting.
-4.  Change it from **Auto** to a specific backend supported by your OS (e.g., **Vulkan**, **DirectX12**, **OpenGL**, or **Metal**).
-5.  Restart the application and try opening the image again. Experiment with different backends if the first one doesn't work.
-</details>
+1. Open **Settings** on the **Home Screen** (Gear icon).
+
+2. Navigate to the **Processing** tab.
+
+3. Locate the **Processing Backend** setting.
+
+4. Change it from **Auto** to a specific backend supported by your OS (e.g., **Vulkan**, **DirectX12**, **OpenGL**, or **Metal**).
+
+5. Restart the application and try opening the image again. Experiment with different backends if the first one doesn't work.
+   
+   </details>
 
 <details>
 <summary>Linux Wayland/WebKit Crash</summary>

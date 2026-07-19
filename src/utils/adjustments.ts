@@ -515,7 +515,7 @@ export const INITIAL_ADJUSTMENTS: Adjustments = {
     yellows: { hue: 0, saturation: 0, luminance: 0 },
   },
   hue: 0,
-  lensCorrectionMode: 'manual',
+  lensCorrectionMode: 'auto',
   lensDistortionAmount: 100,
   lensVignetteAmount: 100,
   lensTcaAmount: 100,
@@ -654,7 +654,12 @@ export const normalizeLoadedAdjustments = (loadedAdjustments: Adjustments): any 
     flareAmount: loadedAdjustments.flareAmount ?? INITIAL_ADJUSTMENTS.flareAmount,
     glowAmount: loadedAdjustments.glowAmount ?? INITIAL_ADJUSTMENTS.glowAmount,
     halationAmount: loadedAdjustments.halationAmount ?? INITIAL_ADJUSTMENTS.halationAmount,
-    lensCorrectionMode: loadedAdjustments.lensCorrectionMode || 'manual',
+    // Older sidecars used `manual` as a neutral default. If no lens was ever
+    // selected, safely migrate that legacy default to automatic detection.
+    lensCorrectionMode:
+      loadedAdjustments.lensCorrectionMode === 'manual' && !loadedAdjustments.lensMaker && !loadedAdjustments.lensModel
+        ? 'auto'
+        : loadedAdjustments.lensCorrectionMode || 'auto',
     lensMaker: loadedAdjustments.lensMaker ?? INITIAL_ADJUSTMENTS.lensMaker,
     lensModel: loadedAdjustments.lensModel ?? INITIAL_ADJUSTMENTS.lensModel,
     lensDistortionAmount: loadedAdjustments.lensDistortionAmount ?? INITIAL_ADJUSTMENTS.lensDistortionAmount,

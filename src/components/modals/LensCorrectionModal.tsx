@@ -91,7 +91,7 @@ interface LensCorrectionModalProps {
 }
 
 const DEFAULT_PARAMS: LensParams = {
-  lensCorrectionMode: 'manual',
+  lensCorrectionMode: 'auto',
   lensMaker: null,
   lensModel: null,
   lensDistortionAmount: 100,

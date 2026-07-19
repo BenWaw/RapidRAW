@@ -25,6 +25,62 @@ export function useImageLoader(cachedEditStateRef: React.RefObject<any>) {
 
   const isWgpuActive = appSettings?.useWgpuRenderer !== false && selectedImage?.isReady && hasRenderedFirstFrame;
 
+  const applyAutoLensCorrection = async (path: string, exif: Record<string, string>) => {
+    const state = useEditorStore.getState();
+    if (
+      state.selectedImage?.path !== path ||
+      state.adjustments.lensCorrectionMode !== 'auto' ||
+      state.adjustments.lensModel ||
+      state.adjustments.lensDistortionParams
+    ) {
+      return;
+    }
+
+    const model = exif.LensModel;
+    const maker = exif.LensMake || exif.Make;
+    const focalLength = Number.parseFloat(exif.FocalLength || '');
+    if (!model || !maker || !Number.isFinite(focalLength) || focalLength <= 0) return;
+
+    try {
+      const match = await invoke<[string, string] | null>('autodetect_lens', { maker, model });
+      if (!match || useEditorStore.getState().selectedImage?.path !== path) return;
+
+      const [detectedMaker, detectedModel] = match;
+      const aperture = Number.parseFloat((exif.FNumber || '').replace(/^f\//i, ''));
+      const distance = Number.parseFloat(exif.SubjectDistance || '');
+      const lensDistortionParams = await invoke<any>('get_lens_distortion_params', {
+        maker: detectedMaker,
+        model: detectedModel,
+        focalLength,
+        aperture: Number.isFinite(aperture) ? aperture : null,
+        distance: Number.isFinite(distance) ? distance : null,
+      });
+
+      if (!lensDistortionParams) return;
+      setEditor((current) => {
+        if (
+          current.selectedImage?.path !== path ||
+          current.adjustments.lensCorrectionMode !== 'auto' ||
+          current.adjustments.lensModel ||
+          current.adjustments.lensDistortionParams
+        ) {
+          return current;
+        }
+        return {
+          adjustments: {
+            ...current.adjustments,
+            lensMaker: detectedMaker,
+            lensModel: detectedModel,
+            lensDistortionParams,
+            lensDistortionEnabled: true,
+          },
+        };
+      });
+    } catch (error) {
+      console.warn('Automatic lens correction failed:', error);
+    }
+  };
+
   useEffect(() => {
     if (selectedImage && !selectedImage.isReady && selectedImage.path) {
       let isEffectActive = true;
@@ -93,6 +149,8 @@ export function useImageLoader(cachedEditStateRef: React.RefObject<any>) {
             }
             return state;
           });
+
+          void applyAutoLensCorrection(selectedImage.path, loadImageResult.exif || {});
 
           setEditor((state) => {
             if (!state.adjustments.aspectRatio && !state.adjustments.crop) {

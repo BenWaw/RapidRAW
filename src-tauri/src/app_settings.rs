@@ -294,6 +294,10 @@ pub fn default_linear_raw_mode() -> String {
     "auto".to_string()
 }
 
+fn default_raw_camera_profile() -> String {
+    "auto".to_string()
+}
+
 pub fn default_tagging_shortcuts_option() -> Option<Vec<String>> {
     Some(vec![
         "portrait".to_string(),
@@ -374,6 +378,8 @@ pub struct AppSettings {
     pub copy_paste_settings: CopyPasteSettings,
     #[serde(default)]
     pub raw_highlight_compression: Option<f32>,
+    #[serde(default = "default_raw_camera_profile")]
+    pub raw_camera_profile: String,
     #[serde(default)]
     pub processing_backend: Option<String>,
     #[serde(default)]
@@ -474,6 +480,7 @@ impl Default for AppSettings {
             open_tree_sections: default_open_tree_sections(),
             copy_paste_settings: CopyPasteSettings::default(),
             raw_highlight_compression: Some(2.5),
+            raw_camera_profile: default_raw_camera_profile(),
             processing_backend: Some("auto".to_string()),
             #[cfg(target_os = "linux")]
             linux_gpu_optimization: Some(true),

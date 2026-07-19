@@ -342,6 +342,12 @@ pub fn extract_metadata(file_bytes: &[u8]) -> Option<HashMap<String, String>> {
         }
     }
 
+    if let Some(mode) = crate::olympus_metadata::picture_mode(file_bytes)
+        && let Some(name) = crate::olympus_metadata::picture_mode_name(mode)
+    {
+        map.insert("OlympusPictureMode".to_string(), name.to_string());
+    }
+
     if !map.is_empty() {
         return Some(map);
     }

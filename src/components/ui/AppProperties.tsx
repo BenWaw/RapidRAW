@@ -184,6 +184,7 @@ export interface AppSettings {
   uiVisibility?: UiVisibility;
   adjustmentVisibility?: { [key: string]: boolean };
   rawHighlightCompression?: number;
+  rawCameraProfile?: string;
   processingBackend?: string;
   linuxGpuOptimization?: boolean;
   exportPresets?: ExportPreset[];

@@ -1,4 +1,5 @@
 use crate::image_processing::apply_orientation;
+use crate::olympus_metadata;
 use anyhow::{Result, anyhow};
 use image::{DynamicImage, ImageBuffer, Rgba};
 use rawler::{
@@ -17,6 +18,7 @@ pub fn develop_raw_image(
     fast_demosaic: bool,
     highlight_compression: f32,
     linear_mode: String,
+    camera_profile: String,
     cancel_token: Option<(Arc<AtomicUsize>, usize)>,
 ) -> Result<DynamicImage> {
     let (developed_image, orientation) = develop_internal(
@@ -24,6 +26,7 @@ pub fn develop_raw_image(
         fast_demosaic,
         highlight_compression,
         linear_mode,
+        camera_profile,
         cancel_token,
     )?;
     Ok(apply_orientation(developed_image, orientation))
@@ -50,6 +53,7 @@ fn develop_internal(
     fast_demosaic: bool,
     highlight_compression: f32,
     linear_mode: String,
+    camera_profile: String,
     cancel_token: Option<(Arc<AtomicUsize>, usize)>,
 ) -> Result<(DynamicImage, Orientation)> {
     let check_cancel = || -> Result<()> {
@@ -75,6 +79,12 @@ fn develop_internal(
         .orientation
         .map(Orientation::from_u16)
         .unwrap_or(Orientation::Normal);
+    let olympus_profile = resolve_olympus_profile(
+        &camera_profile,
+        &metadata.make,
+        &metadata.model,
+        olympus_metadata::picture_mode(file_bytes),
+    );
 
     let is_linear_format = is_linear_raw_format(&raw_image);
 
@@ -227,7 +237,146 @@ fn develop_internal(
         }
     };
 
+    let dynamic_image = match olympus_profile {
+        OlympusProfile::Vivid => {
+            apply_olympus_color_profile(dynamic_image, 1.26, 1.022, 1.000, 0.978)
+        }
+        OlympusProfile::Natural => apply_olympus_natural_profile(dynamic_image),
+        OlympusProfile::Muted => {
+            apply_olympus_color_profile(dynamic_image, 0.90, 1.012, 1.000, 0.990)
+        }
+        OlympusProfile::Portrait => {
+            apply_olympus_color_profile(dynamic_image, 1.05, 1.030, 1.000, 0.975)
+        }
+        OlympusProfile::IEnhance => {
+            apply_olympus_color_profile(dynamic_image, 1.18, 1.020, 1.006, 0.980)
+        }
+        OlympusProfile::Monochrome => apply_olympus_monochrome_profile(dynamic_image),
+        OlympusProfile::Sepia => apply_olympus_sepia_profile(dynamic_image),
+        OlympusProfile::None => dynamic_image,
+    };
+
     Ok((dynamic_image, orientation))
+}
+
+/// A gentle, camera-specific starting rendering, applied before all user edits.
+/// It was tuned against JPEG+ORF pairs from an Olympus OM-D E-M5 Mark II.
+fn apply_olympus_natural_profile(image: DynamicImage) -> DynamicImage {
+    apply_olympus_color_profile(image, 1.14, 1.018, 1.003, 0.982)
+}
+
+fn apply_olympus_color_profile(
+    image: DynamicImage,
+    saturation: f32,
+    red_gain: f32,
+    green_gain: f32,
+    blue_gain: f32,
+) -> DynamicImage {
+    let mut pixels = image.to_rgba32f();
+
+    for pixel in pixels.pixels_mut() {
+        let r = pixel[0].max(0.0);
+        let g = pixel[1].max(0.0);
+        let b = pixel[2].max(0.0);
+        let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+        // Preserve neutral greys while bringing muted colours closer to the
+        // Olympus Natural JPEG rendering. This is intentionally subtler than
+        // a global saturation slider and leaves highlight data unclipped.
+        let mut r = luma + (r - luma) * saturation;
+        let mut g = luma + (g - luma) * saturation;
+        let mut b = luma + (b - luma) * saturation;
+        r *= red_gain;
+        g *= green_gain;
+        b *= blue_gain;
+
+        pixel[0] = r.max(0.0);
+        pixel[1] = g.max(0.0);
+        pixel[2] = b.max(0.0);
+    }
+
+    DynamicImage::ImageRgba32F(pixels)
+}
+
+fn apply_olympus_monochrome_profile(image: DynamicImage) -> DynamicImage {
+    let mut pixels = image.to_rgba32f();
+    for pixel in pixels.pixels_mut() {
+        let luma =
+            0.2126 * pixel[0].max(0.0) + 0.7152 * pixel[1].max(0.0) + 0.0722 * pixel[2].max(0.0);
+        pixel[0] = luma;
+        pixel[1] = luma;
+        pixel[2] = luma;
+    }
+    DynamicImage::ImageRgba32F(pixels)
+}
+
+fn apply_olympus_sepia_profile(image: DynamicImage) -> DynamicImage {
+    let mut pixels = image.to_rgba32f();
+    for pixel in pixels.pixels_mut() {
+        let luma =
+            0.2126 * pixel[0].max(0.0) + 0.7152 * pixel[1].max(0.0) + 0.0722 * pixel[2].max(0.0);
+        pixel[0] = luma * 1.12;
+        pixel[1] = luma * 1.00;
+        pixel[2] = luma * 0.76;
+    }
+    DynamicImage::ImageRgba32F(pixels)
+}
+
+#[derive(Clone, Copy)]
+enum OlympusProfile {
+    None,
+    Vivid,
+    Natural,
+    Muted,
+    Portrait,
+    IEnhance,
+    Monochrome,
+    Sepia,
+}
+
+fn resolve_olympus_profile(
+    profile: &str,
+    make: &str,
+    model: &str,
+    picture_mode: Option<u16>,
+) -> OlympusProfile {
+    if profile == "neutral" {
+        return OlympusProfile::None;
+    }
+
+    let normalized_make = make.to_ascii_uppercase();
+    let normalized_model: String = model
+        .to_ascii_uppercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let is_em5_mark_ii = normalized_make.contains("OLYMPUS")
+        && (normalized_model.contains("EM5MARKII") || normalized_model.contains("EM5MKII"));
+
+    if !is_em5_mark_ii {
+        return OlympusProfile::None;
+    }
+
+    match profile {
+        "auto" => match picture_mode {
+            Some(1) => OlympusProfile::Vivid,
+            Some(2) => OlympusProfile::Natural,
+            Some(3) => OlympusProfile::Muted,
+            Some(4) | Some(6) => OlympusProfile::Portrait,
+            Some(5) => OlympusProfile::IEnhance,
+            Some(12..=14) | Some(18) | Some(256) => OlympusProfile::Monochrome,
+            Some(512) => OlympusProfile::Sepia,
+            _ => OlympusProfile::Natural,
+        },
+        "olympus_natural" => OlympusProfile::Natural,
+        "olympus_vivid" => OlympusProfile::Vivid,
+        "olympus_muted" => OlympusProfile::Muted,
+        "olympus_portrait" => OlympusProfile::Portrait,
+        "olympus_i_enhance" => OlympusProfile::IEnhance,
+        "olympus_monochrome" => OlympusProfile::Monochrome,
+        "olympus_sepia" => OlympusProfile::Sepia,
+        _ => OlympusProfile::None,
+    }
 }
 
 pub fn get_fast_demosaic_scale_factor(

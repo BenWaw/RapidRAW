@@ -28,6 +28,7 @@ mod lens_correction;
 mod lut_processing;
 mod mask_generation;
 mod negative_conversion;
+mod olympus_metadata;
 mod panorama_stitching;
 mod panorama_utils;
 mod preset_converter;
